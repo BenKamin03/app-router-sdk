@@ -4,11 +4,11 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "dev": "ts-node scripts/api-sdk.ts --watch --debug & next dev --turbopack",
-        "build": "npx ts-node scripts/api-sdk.ts && next build",
+        "dev": "node --loader ts-node/esm scripts/api-sdk.ts --watch --debug & next dev --turbopack",
+        "build": "node --loader ts-node/esm scripts/api-sdk.ts && next build",
         "start": "next start",
         "lint": "next lint",
-        "generate-sdk": "ts-node scripts/api-sdk.ts"
+        "generate-sdk": "node --loader ts-node/esm scripts/api-sdk.ts"
     },
     "dependencies": {
         "next": "15.3.1",
