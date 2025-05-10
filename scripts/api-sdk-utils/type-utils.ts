@@ -1,5 +1,5 @@
 import { SyntaxKind } from 'ts-morph';
-import type { SourceFile, FunctionDeclaration, ArrowFunction, Signature, CallExpression } from 'ts-morph';
+import type { SourceFile, FunctionDeclaration, ArrowFunction, Signature, CallExpression, BinaryExpression, PrefixUnaryExpression } from 'ts-morph';
 import type { MethodInfo } from './types.ts';
 
 /**
@@ -75,6 +75,168 @@ export function determineInputType(handlerNode: FunctionDeclaration | ArrowFunct
         }
     }
 
+    if (bodyVars.size > 0) {
+        const props = new Set<string>();
+        handlerNode.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression).forEach((paeNode) => {
+            const pae = paeNode.asKind(SyntaxKind.PropertyAccessExpression)!;
+            const expr = pae.getExpression();
+            if (expr.isKind(SyntaxKind.Identifier) && bodyVars.has(expr.getText())) {
+                props.add(pae.getName());
+            }
+        });
+        if (props.size > 0) {
+            const stringMethods = new Set<string>([
+                'split','trim','toUpperCase','toLowerCase','includes','startsWith','endsWith',
+                'slice','substr','substring','match','replace','concat','padStart','padEnd',
+                'charAt','charCodeAt','codePointAt','search'
+            ]);
+            const numberMethods = new Set<string>([
+                'toFixed','toExponential','toPrecision','valueOf'
+            ]);
+            const arrayMethods = new Set<string>([
+                'map','filter','reduce','forEach','some','every','find','findIndex','slice','concat',
+                'push','pop','shift','unshift','includes','indexOf','lastIndexOf','reverse','sort',
+                'fill','copyWithin'
+            ]);
+            const propTypes: Record<string, string> = {};
+
+            props.forEach((propName) => {
+                const usages = new Set<string>();
+                // nested property access implies object (record)
+                handlerNode.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression).forEach((paeNode) => {
+                    const paeInner = paeNode.asKind(SyntaxKind.PropertyAccessExpression)!;
+                    const parentExpr = paeInner.getExpression();
+                    if (parentExpr.isKind(SyntaxKind.PropertyAccessExpression)) {
+                        const inner = parentExpr.asKind(SyntaxKind.PropertyAccessExpression)!;
+                        if (
+                            inner.getExpression().isKind(SyntaxKind.Identifier) &&
+                            bodyVars.has(inner.getExpression().getText()) &&
+                            inner.getName() === propName
+                        ) {
+                            usages.add('record');
+                        }
+                    }
+                });
+                // detect element access: numeric index => array, else => record
+                handlerNode.getDescendantsOfKind(SyntaxKind.ElementAccessExpression).forEach((eaNode) => {
+                    const ea = eaNode.asKind(SyntaxKind.ElementAccessExpression)!;
+                    const expr = ea.getExpression().asKind(SyntaxKind.PropertyAccessExpression);
+                    const arg = ea.getArgumentExpression();
+                    if (
+                        expr &&
+                        expr.getExpression().isKind(SyntaxKind.Identifier) &&
+                        bodyVars.has(expr.getExpression().getText()) &&
+                        expr.getName() === propName
+                    ) {
+                        if (arg?.isKind(SyntaxKind.NumericLiteral)) {
+                            usages.add('array');
+                        } else {
+                            usages.add('record');
+                        }
+                    }
+                });
+                handlerNode.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression).forEach((paeNode) => {
+                    const pae = paeNode.asKind(SyntaxKind.PropertyAccessExpression)!;
+                    const expr = pae.getExpression();
+
+                    // direct numeric operations
+                    if (expr.isKind(SyntaxKind.Identifier)
+                        && bodyVars.has(expr.getText())
+                        && pae.getName() === propName) {
+                        const bin = paeNode.getParent()?.asKind(SyntaxKind.BinaryExpression);
+                        if (bin) {
+                            const op = bin.getOperatorToken().getText();
+                            if (['*','/','-','%','**'].includes(op)) {
+                                usages.add('number');
+                            } else if (op === '+') {
+                                const other = bin.getLeft() === paeNode ? bin.getRight() : bin.getLeft();
+                                if (other?.isKind(SyntaxKind.NumericLiteral)) usages.add('number');
+                                else if (other?.isKind(SyntaxKind.StringLiteral)) usages.add('string');
+                                else usages.add('unknown');
+                            }
+                        }
+                    }
+                    // method-call based inference
+                    const call = paeNode.getParent()?.asKind(SyntaxKind.CallExpression);
+                    if (call && call.getExpression() === paeNode) {
+                        const inner = pae.getExpression().asKind(SyntaxKind.PropertyAccessExpression);
+                        if (inner) {
+                            const obj = inner.getExpression();
+                            if (obj.isKind(SyntaxKind.Identifier)
+                                && bodyVars.has(obj.getText())
+                                && inner.getName() === propName) {
+                                const method = pae.getName();
+                                if (stringMethods.has(method)) usages.add('string');
+                                else if (numberMethods.has(method)) usages.add('number');
+                                else if (arrayMethods.has(method)) usages.add('array');
+                            }
+                        }
+                    }
+                });
+                // detect boolean comparisons and logical usage
+                handlerNode.getDescendantsOfKind(SyntaxKind.BinaryExpression).forEach((binNode) => {
+                    const bin = binNode.asKind(SyntaxKind.BinaryExpression)!;
+                    const op = bin.getOperatorToken().getText();
+                    if (['==','===','!=','!==','&&','||'].includes(op)) {
+                        [bin.getLeft(), bin.getRight()].forEach((side) => {
+                            const pa = side.asKind(SyntaxKind.PropertyAccessExpression);
+                            if (
+                                pa &&
+                                pa.getExpression().isKind(SyntaxKind.Identifier) &&
+                                bodyVars.has(pa.getExpression().getText()) &&
+                                pa.getName() === propName
+                            ) {
+                                usages.add('boolean');
+                            }
+                        });
+                    }
+                });
+                
+                // detect unary not usage
+                handlerNode.getDescendantsOfKind(SyntaxKind.PrefixUnaryExpression).forEach((unNode) => {
+                    const un = unNode.asKind(SyntaxKind.PrefixUnaryExpression)!;
+                    if (un.getOperatorToken() === SyntaxKind.ExclamationToken) {
+                        const operand = un.getOperand();
+                        const pa = operand.asKind(SyntaxKind.PropertyAccessExpression);
+                        if (
+                            pa &&
+                            pa.getExpression().isKind(SyntaxKind.Identifier) &&
+                            bodyVars.has(pa.getExpression().getText()) &&
+                            pa.getName() === propName
+                        ) {
+                            usages.add('boolean');
+                        }
+                    }
+                });
+
+                let type: string;
+                if (usages.has('array')) {
+                    if (usages.has('number') && !usages.has('string')) type = 'number[]';
+                    else if (usages.has('string') && !usages.has('number')) type = 'string[]';
+                    else type = 'unknown[]';
+                } else if (
+                    usages.has('record') &&
+                    !usages.has('array') &&
+                    !usages.has('number') &&
+                    !usages.has('string') &&
+                    !usages.has('boolean')
+                ) {
+                    type = 'Record<string, unknown>';
+                } else if (usages.has('boolean') && !usages.has('number') && !usages.has('string')) {
+                    type = 'boolean';
+                } else if (usages.has('number') && !usages.has('string')) {
+                    type = 'number';
+                } else if (usages.has('string') && !usages.has('number')) {
+                    type = 'string';
+                } else {
+                    type = 'unknown';
+                }
+                propTypes[propName] = type;
+            });
+            const fields = Array.from(props).map(name => `${name}: ${propTypes[name]}`).join('; ');
+            return `{ ${fields} }`;
+        }
+    }
     return 'unknown';
 }
 

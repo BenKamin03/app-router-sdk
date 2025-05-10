@@ -33,7 +33,10 @@ function buildPathLiteral(segments: string[]): string {
  */
 function buildMethodCode(methodInfo: MethodInfo, pathLit: string): string {
 	const methodName = methodInfo.name;
-	const dataType = methodInfo.returnType;
+	const dataType = methodInfo.returnType
+		.replace(/import\((?:'[^']+'|"[^"]+")\)\./g, '')
+		.replace(/\bRequestCookie\b/g, 'string')
+		.replace(/NextResponse<([^>]+)>/g, '$1');
 	const isGet = methodName === 'GET';
 	const inputType = methodInfo.inputType;
 
@@ -103,21 +106,44 @@ function buildMethodCode(methodInfo: MethodInfo, pathLit: string): string {
 		);
 	}
 
-	if (isGet) {
+	const handlerCodeFull = methodInfo.handlerCode ?? '';
+	const hasInfiniteDirective = handlerCodeFull.includes("'use infinite'") || handlerCodeFull.includes('"use infinite"');
+	if (hasInfiniteDirective) {
+		if (usesBody) {
+			return (
+				`${methodName}: ${paramsSignature}: UseInfiniteQueryResult<${dataType}, unknown> => ` +
+				`useInfiniteQuery<${dataType}, unknown>(['${methodName}', ${pathLit}, searchParams, body], ({ pageParam = 1 }) => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) + '&pagination=' + pageParam : '?pagination=' + pageParam), { method: '${methodName}', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(res => res.json()), { getNextPageParam: (lastPage) => lastPage.nextPage }),`
+			);
+		}
 		return (
-			`${methodName}: ${paramsSignature}: UseQueryResult<${dataType}, unknown> => ` +
-			`useQuery<${dataType}, unknown>(['${methodName}', ${pathLit}, searchParams], () => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) : '')).then(res => res.json())),`
+			`${methodName}: ${paramsSignature}: UseInfiniteQueryResult<${dataType}, unknown> => ` +
+			`useInfiniteQuery<${dataType}, unknown>(['${methodName}', ${pathLit}, searchParams], ({ pageParam = 1 }) => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) + '&pagination=' + pageParam : '?pagination=' + pageParam)).then(res => res.json()), { getNextPageParam: (lastPage) => lastPage.nextPage }),`
 		);
 	}
-	if (!usesBody) {
+	const handlerLines = methodInfo.handlerCode?.trim().split('\n') ?? [];
+	const firstLine = handlerLines[0] ?? '';
+	const useMutationDirective = firstLine === '\'use mutation\';' || firstLine === '\"use mutation\";';
+	if (useMutationDirective) {
+		if (!usesBody) {
+			return (
+				`${methodName}: ${paramsSignature}: UseMutationResult<${dataType}, unknown, void> => ` +
+				`useMutation<${dataType}, unknown, void>(() => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) : ''), { method: '${methodName}' }).then(res => res.json())),`
+			);
+		}
 		return (
-			`${methodName}: ${paramsSignature}: UseMutationResult<${dataType}, unknown, void> => ` +
-			`useMutation<${dataType}, unknown, void>(() => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) : ''), { method: '${methodName}' }).then(res => res.json())),`
+			`${methodName}: ${paramsSignature}: UseMutationResult<${dataType}, unknown, ${inputType}> => ` +
+			`useMutation<${dataType}, unknown, ${inputType}>(() => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) : ''), { method: '${methodName}', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(res => res.json())),`
+		);
+	}
+	if (usesBody) {
+		return (
+			`${methodName}: ${paramsSignature}: UseQueryResult<${dataType}, unknown> => ` +
+			`useQuery<${dataType}, unknown>(['${methodName}', ${pathLit}, searchParams, body], () => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) : ''), { method: '${methodName}', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(res => res.json())),`
 		);
 	}
 	return (
-		`${methodName}: ${paramsSignature}: UseMutationResult<${dataType}, unknown, ${inputType}> => ` +
-		`useMutation<${dataType}, unknown, ${inputType}>(() => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) : ''), { method: '${methodName}', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(res => res.json())),`
+		`${methodName}: ${paramsSignature}: UseQueryResult<${dataType}, unknown> => ` +
+		`useQuery<${dataType}, unknown>(['${methodName}', ${pathLit}, searchParams], () => fetch(${pathLit} + (searchParams ? '?' + new URLSearchParams(searchParams) : '')).then(res => res.json())),`
 	);
 }
 

@@ -19,7 +19,6 @@ function buildMethodHandlerCode(methodInfo: MethodInfo): string {
 		Boolean(methodInfo.bodyVariableName) ||
 		((methodInfo.bodyParams?.length ?? 0) > 0)
 	);
-	const dataType = methodInfo.returnType;
 	const inputType = methodInfo.inputType;
 
 	if (methodInfo.handlerCode?.includes('NextResponse.redirect')) {
@@ -32,7 +31,31 @@ function buildMethodHandlerCode(methodInfo: MethodInfo): string {
 	}
 
 	const handlerCode = methodInfo.handlerCode || '';
-	let codeLines = handlerCode.split('\n');
+	const handlerRawLines = handlerCode.split('\n');
+	const infiniteIndex = handlerRawLines.findIndex((line) => line.includes('use infinite'));
+	if (infiniteIndex >= 0) {
+		const rawLines = handlerRawLines.filter((line) =>
+			!line.includes('use infinite') &&
+			!line.includes('req.nextUrl') &&
+			!line.includes('await req.json()') &&
+			!/^\s*const \{\s*searchParams.*\}/.test(line) &&
+			!/^\s*const page =/.test(line)
+		);
+
+		const infiniteParams = usesBody
+			? `{ body, searchParams }: { body: ${inputType}; searchParams?: Record<string, string> }, pageParam: number = 1`
+			: `{ searchParams }: { searchParams?: Record<string, string> }, pageParam: number = 1`;
+
+		const infiniteBodyLines: string[] = [];
+		infiniteBodyLines.push('  const page = pageParam;');
+		rawLines.forEach((l) => infiniteBodyLines.push('  ' + l));
+		const infiniteBody = infiniteBodyLines.join('\n');
+		return `  ${methodName}: ${createFunctionString(infiniteParams, infiniteBody)},`;
+	}
+
+	const mutationIndex = handlerRawLines.findIndex((line) => line.includes('use mutation'));
+	if (mutationIndex >= 0) handlerRawLines.splice(mutationIndex, 1);
+	let codeLines = handlerRawLines;
 	if (methodName !== 'GET') {
 		codeLines = codeLines.filter((line) => !line.includes('.json('));
 	}
