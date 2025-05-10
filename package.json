@@ -1,27 +1,35 @@
 {
-  "name": "app-router-sdk",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
-  "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "next": "15.3.1"
-  },
-  "devDependencies": {
-    "typescript": "^5",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
-    "eslint": "^9",
-    "eslint-config-next": "15.3.1",
-    "@eslint/eslintrc": "^3"
-  }
+    "name": "app-router-sdk",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "ts-node scripts/api-sdk.ts --watch --debug & next dev --turbopack",
+        "build": "ts-node scripts/api-sdk.ts && next build",
+        "start": "next start",
+        "lint": "next lint",
+        "generate-sdk": "ts-node scripts/api-sdk.ts --debug"
+    },
+    "dependencies": {
+        "next": "15.3.1",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "react-query": "^3.39.3",
+        "ts-node": "^10.9.2"
+    },
+    "devDependencies": {
+        "@eslint/eslintrc": "^3",
+        "@tailwindcss/postcss": "^4",
+        "@types/node": "^20",
+        "@types/prettier": "^2.7.3",
+        "@types/react": "^19",
+        "@types/react-dom": "^19",
+        "eslint": "^9",
+        "eslint-config-next": "15.3.1",
+        "prettier": "^3.5.3",
+        "tailwindcss": "^4",
+        "ts-morph": "^25.0.1",
+        "typescript": "^5",
+        "zod": "^3.24.3"
+    }
 }
